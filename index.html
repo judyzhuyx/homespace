@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>SnapSpace — Co-Op Room & Streak Demo</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @keyframes floatSlow {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-6px); }
+    }
+    @keyframes popIn {
+      0% { transform: scale(0.35) translateY(-28px); opacity: 0; }
+      70% { transform: scale(1.08) translateY(2px); opacity: 1; }
+      100% { transform: scale(1) translateY(0); opacity: 1; }
+    }
+    @keyframes pulseGlow {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.45); }
+      50% { box-shadow: 0 0 24px 6px rgba(251, 191, 36, 0.25); }
+    }
+    .float-slow { animation: floatSlow 3.4s ease-in-out infinite; }
+    .pop-in { animation: popIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+    .pulse-glow { animation: pulseGlow 2.4s infinite; }
+
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+    /* Isometric-inspired room grid */
+    .room-surface {
+      background-image:
+        radial-gradient(circle at 50% 20%, rgba(251, 191, 36, 0.14), transparent 55%),
+        linear-gradient(155deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.01) 100%);
+    }
+    .grid-dots {
+      background-image: radial-gradient(rgba(255, 255, 255, 0.14) 1px, transparent 1px);
+      background-size: 22px 22px;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-2 sm:p-4 selection:bg-amber-400 selection:text-slate-950">
+
+  <!-- Mobile App Shell -->
+  <div id="app" class="w-full max-w-[420px] h-[820px] max-h-[95vh] bg-slate-900 rounded-[36px] border border-slate-800 shadow-2xl flex flex-col overflow-hidden relative">
+
+    <!-- Top Header -->
+    <header class="px-4 pt-4 pb-3 bg-slate-900/95 backdrop-blur border-b border-slate-800/80 z-20 flex items-center justify-between gap-2">
+      <!-- Space Switcher -->
+      <div class="flex items-center bg-slate-800/90 p-1 rounded-full border border-slate-700/70">
+        <button id="btnPersonalSpace" onclick="switchSpaceMode('personal')" class="px-3 py-1 rounded-full text-xs font-semibold transition bg-amber-400 text-slate-950">
+          My Room
+        </button>
+        <button id="btnSharedSpace" onclick="switchSpaceMode('shared')" class="px-3 py-1 rounded-full text-xs font-semibold transition text-slate-300 hover:text-white flex items-center gap-1">
+          <span>Co-Op</span>
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+        </button>
+      </div>
+
+      <!-- Streak & Wrap-up -->
+      <div class="flex items-center gap-2">
+        <div id="streakPill" class="px-2.5 py-1 rounded-full bg-orange-500/15 border border-orange-400/30 text-orange-300 text-xs font-bold flex items-center gap-1">
+          <span>🔥</span>
+          <span id="streakCount">9d</span>
+        </div>
+        <button onclick="openWrapModal()" class="px-2.5 py-1 rounded-full bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 text-indigo-200 text-xs font-semibold transition">
+          ✨ Wrap
+        </button>
+      </div>
+    </header>
+
+    <!-- Sub-bar: Level / Expansion / Friend Indicator -->
+    <div id="subBar" class="px-4 py-2 bg-slate-900/80 border-b border-slate-800/60 flex items-center justify-between text-xs z-10">
+      <div class="flex items-center gap-2">
+        <span id="roomBadge" class="px-2 py-0.5 rounded-md bg-amber-400/15 text-amber-300 font-semibold border border-amber-400/20">
+          Lv.1 Studio
+        </span>
+        <span id="roomHint" class="text-slate-400 truncate max-w-[175px]">Tap any item to inspect snap</span>
+      </div>
+      <button id="expandBtn" onclick="triggerExpansion()" class="text-amber-300 hover:text-amber-200 font-semibold underline underline-offset-2">
+        + Expand Loft
+      </button>
+    </div>
+
+    <!-- Main Viewport -->
+    <main id="mainViewport" class="flex-1 relative overflow-y-auto no-scrollbar">
+
+      <!-- VIEW 1: ROOM VIEW -->
+      <section id="roomView" class="h-full flex flex-col p-3.5 gap-3">
+
+        <!-- Co-Op Status Banner (Shown in Shared Mode) -->
+        <div id="coopBanner" class="hidden bg-gradient-to-r from-violet-950/90 via-slate-900 to-sky-950/90 border border-violet-500/30 rounded-2xl p-3 flex items-center justify-between">
+          <div class="flex items-center gap-2.5">
+            <div class="flex -space-x-2">
+              <div class="w-7 h-7 rounded-full bg-amber-400 text-slate-950 font-bold text-xs flex items-center justify-center ring-2 ring-slate-900">Y</div>
+              <div class="w-7 h-7 rounded-full bg-sky-400 text-slate-950 font-bold text-xs flex items-center justify-center ring-2 ring-slate-900">A</div>
+            </div>
+            <div>
+              <p class="text-xs font-bold text-white">You + Alex Co-Op Room</p>
+              <p id="coopStatusText" class="text-[11px] text-amber-200/90">Alex posted today! Post yours to fuse a duo relic ⚡</p>
+            </div>
+          </div>
+          <span class="text-xs font-bold px-2 py-1 rounded-lg bg-white/10 text-amber-300">🔗 6d</span>
+        </div>
+
+        <!-- Room Canvas -->
+        <div id="roomCanvas" class="relative flex-1 min-h-[430px] rounded-3xl border border-slate-700/80 room-surface overflow-hidden flex flex-col justify-between p-3 transition-all duration-500">
+
+          <!-- Loft / Expansion Tier Banner (Appears when Lv >= 2) -->
+          <div id="loftZone" class="hidden rounded-2xl border border-emerald-400/25 bg-emerald-950/35 backdrop-blur-sm p-2.5 mb-2">
+            <div class="flex items-center justify-between mb-1.5">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-emerald-300 flex items-center gap-1">
+                <span>🌿</span> Upper Loft & Starlight Deck
+              </span>
+              <span class="text-[10px] text-emerald-200/75">Expanded Tier</span>
+            </div>
+            <div id="loftItemsContainer" class="flex flex-wrap gap-2"></div>
+          </div>
+
+          <!-- Main Floor Area -->
+          <div class="relative flex-1 rounded-2xl border border-white/10 bg-slate-950/45 grid-dots p-3 flex flex-col justify-between">
+            <!-- Top Room Label -->
+            <div class="flex items-center justify-between text-[11px] text-slate-400">
+              <span id="roomTitleLabel">🏠 Your Living & Study Nook</span>
+              <span id="itemCountLabel">4 items placed</span>
+            </div>
+
+            <!-- Furniture Items Grid -->
+            <div id="furnitureContainer" class="grid grid-cols-2 gap-2.5 my-auto py-2"></div>
+
+            <!-- Live Visitors / Presence Strip -->
+            <div id="visitorStrip" class="flex items-center justify-between bg-slate-900/85 border border-slate-700/70 rounded-xl px-3 py-1.5 text-[11px]">
+              <div class="flex items-center gap-1.5 text-slate-300">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span id="presenceText">Maya is peeking in</span>
+              </div>
+              <button onclick="openView('friends')" class="text-amber-300 font-semibold hover:underline">
+                Visit friends →
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 2: FRIENDS & VISIT VIEW -->
+      <section id="friendsView" class="hidden p-4 space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-base font-bold text-white">Streaks & Room Visits</h2>
+            <p class="text-xs text-slate-400">Drop into a friend's room and tap their items to view snaps</p>
+          </div>
+          <button onclick="openView('room')" class="text-xs px-3 py-1.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200">
+            Back to Room
+          </button>
+        </div>
+
+        <div id="friendsList" class="space-y-2.5"></div>
+      </section>
+
+      <!-- VIEW 3: ARCHIVE / LOGS VIEW -->
+      <section id="archiveView" class="hidden p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-base font-bold text-white">Reorganized Snap Log</h2>
+            <p class="text-xs text-slate-400">Every photo + caption that built your space</p>
+          </div>
+          <span id="archiveCountBadge" class="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-amber-300 font-semibold">0 snaps</span>
+        </div>
+        <div id="archiveList" class="space-y-2.5 pb-6"></div>
+      </section>
+
+    </main>
+
+    <!-- Bottom Navigation -->
+    <nav class="px-4 py-2.5 bg-slate-900 border-t border-slate-800 flex items-center justify-around z-20">
+      <button onclick="openView('room')" id="navRoom" class="flex flex-col items-center gap-0.5 text-amber-400">
+        <span class="text-lg">🏡</span>
+        <span class="text-[10px] font-semibold">Room</span>
+      </button>
+
+      <button onclick="openSnapModal()" class="-mt-7 w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-300 via-amber-400 to-orange-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/30 flex flex-col items-center justify-center pulse-glow active:scale-95 transition">
+        <span class="text-lg leading-none">📸</span>
+        <span class="text-[10px] tracking-tight mt-0.5">SNAP</span>
+      </button>
+
+      <button onclick="openView('friends')" id="navFriends" class="flex flex-col items-center gap-0.5 text-slate-400 hover:text-slate-200">
+        <span class="text-lg">👥</span>
+        <span class="text-[10px] font-semibold">Friends</span>
+      </button>
+
+      <button onclick="openView('archive')" id="navArchive" class="flex flex-col items-center gap-0.5 text-slate-400 hover:text-slate-200">
+        <span class="text-lg">🗂️</span>
+        <span class="text-[10px] font-semibold">Log</span>
+      </button>
+    </nav>
+
+    <!-- MODAL 1: ITEM DETAIL & GUESTBOOK -->
+    <div id="itemModal" class="hidden fixed inset-0 bg-black/75 backdrop-blur-xs z-40 flex items-end sm:items-center justify-center p-3" onclick="if(event.target===this) closeItemModal()">
+      <div class="w-full max-w-[390px] bg-slate-900 border border-slate-700 rounded-3xl p-4 space-y-3 pop-in max-h-[85vh] overflow-y-auto no-scrollbar">
+        <div class="flex items-start justify-between gap-2">
+          <div>
+            <span id="modalCategoryTag" class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-400/15 text-amber-300">CATEGORY</span>
+            <h3 id="modalItemTitle" class="text-base font-bold text-white mt-1">Item Title</h3>
+          </div>
+          <button onclick="closeItemModal()" class="w-7 h-7 rounded-full bg-slate-800 text-slate-300 hover:text-white flex items-center justify-center">✕</button>
+        </div>
+
+        <!-- Snap Visual -->
+        <div id="modalSnapVisual" class="rounded-2xl p-4 bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700/80 flex items-center gap-3">
+          <div id="modalSnapEmoji" class="text-4xl">📚</div>
+          <div class="space-y-1">
+            <p id="modalCaption" class="text-sm font-medium text-white leading-snug">Caption here</p>
+            <p id="modalMeta" class="text-[11px] text-slate-400">Posted by You • Today</p>
+          </div>
+        </div>
+
+        <!-- AI Plaque Note -->
+        <div class="rounded-xl bg-indigo-950/40 border border-indigo-400/25 p-2.5">
+          <p class="text-[10px] font-bold uppercase tracking-wider text-indigo-300 mb-0.5">🏷️ AI Curio Plaque</p>
+          <p id="modalAiNote" class="text-xs text-indigo-100 italic">"Plaque description..."</p>
+        </div>
+
+        <!-- Guestbook Sticky Notes -->
+        <div class="space-y-2">
+          <p class="text-xs font-semibold text-slate-300">📌 Sticky Notes on this Item</p>
+          <div id="modalNotesList" class="space-y-1.5 max-h-28 overflow-y-auto"></div>
+          <div class="flex gap-2 pt-1">
+            <input id="noteInput" type="text" maxlength="70" placeholder="Leave a sticky note..." class="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400" />
+            <button onclick="addStickyNote()" class="px-3 py-1.5 rounded-xl bg-amber-400 text-slate-950 font-bold text-xs hover:bg-amber-300">Post</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL 2: CREATE SNAP -->
+    <div id="snapModal" class="hidden fixed inset-0 bg-black/75 backdrop-blur-xs z-40 flex items-end sm:items-center justify-center p-3" onclick="if(event.target===this) closeSnapModal()">
+      <div class="w-full max-w-[390px] bg-slate-900 border border-slate-700 rounded-3xl p-4 space-y-3 pop-in">
+        <div class="flex items-center justify-between">
+          <h3 class="text-base font-bold text-white">📸 Drop Today's Proof Snap</h3>
+          <button onclick="closeSnapModal()" class="w-7 h-7 rounded-full bg-slate-800 text-slate-300 hover:text-white flex items-center justify-center">✕</button>
+        </div>
+
+        <!-- Quick Presets -->
+        <div>
+          <p class="text-[11px] text-slate-400 mb-1.5">Quick-fill a sample snap (or write your own below):</p>
+          <div class="grid grid-cols-2 gap-1.5">
+            <button type="button" onclick="fillPreset('📖', 'Academic', 'bookshelf', 'Finished 25 pages of cognitive psychology notes', 'Forged from 25 pages of sheer willpower and zero TikToks.')" class="text-left p-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/70 text-[11px]">
+              <span class="font-semibold text-amber-300">📖 Psych Notes</span>
+              <p class="text-slate-400 truncate">25 pages summarized</p>
+            </button>
+            <button type="button" onclick="fillPreset('💻', 'Tech', 'telescope', 'Fixed the bug in my prototype at 1:15 AM', 'Born after three cups of espresso and a dramatic sigh.')" class="text-left p-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/70 text-[11px]">
+              <span class="font-semibold text-sky-300">💻 Late-Night Fix</span>
+              <p class="text-slate-400 truncate">1:15 AM bug squashed</p>
+            </button>
+            <button type="button" onclick="fillPreset('🥐', 'Life', 'espresso', 'Baked matcha almond croissants from scratch', 'Smells like a bakery; proof you are alive beyond screens.')" class="text-left p-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/70 text-[11px]">
+              <span class="font-semibold text-emerald-300">🥐 Matcha Bake</span>
+              <p class="text-slate-400 truncate">Homemade croissants</p>
+            </button>
+            <button type="button" onclick="fillPreset('🎾', 'Sports', 'dumbbells', 'Played 90 mins of tennis in the chilly wind', 'Legs are jelly, brain is surprisingly sharp.')" class="text-left p-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/70 text-[11px]">
+              <span class="font-semibold text-rose-300">🎾 Court Session</span>
+              <p class="text-slate-400 truncate">90 mins of tennis</p>
+            </button>
+          </div>
+        </div>
+
+        <!-- Caption Input -->
+        <div>
+          <label class="block text-[11px] text-slate-400 mb-1">Short Caption</label>
+          <input id="snapCaptionInput" type="text" maxlength="80" placeholder="What did you finish or discover today?" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400" />
+        </div>
+
+        <!-- Category & Photo Emoji Picker -->
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-[11px] text-slate-400 mb-1">Topic Vibe</label>
+            <select id="snapCategorySelect" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none focus:border-amber-400">
+              <option value="Academic">Academic</option>
+              <option value="Tech">Tech</option>
+              <option value="Life">Life</option>
+              <option value="Sports">Sports</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-[11px] text-slate-400 mb-1">Photo Snapshot Icon</label>
+            <select id="snapEmojiSelect" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none focus:border-amber-400">
+              <option value="📷">📷 Daily Shot</option>
+              <option value="📚">📚 Study Desk</option>
+              <option value="⚡">⚡ Spark Moment</option>
+              <option value="🍵">🍵 Tea Break</option>
+              <option value="🎨">🎨 Sketch / Idea</option>
+            </select>
+          </div>
+        </div>
+
+        <button onclick="submitSnap()" class="w-full py-2.5 rounded-2xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs transition shadow-md shadow-amber-500/20">
+          🔥 Post Snap & Grow Room
+        </button>
+      </div>
+    </div>
+
+    <!-- MODAL 3: WEEKLY BRAIN WRAP-UP -->
+    <div id="wrapModal" class="hidden fixed inset-0 bg-black/75 backdrop-blur-xs z-40 flex items-center justify-center p-4" onclick="if(event.target===this) closeWrapModal()">
+      <div class="w-full max-w-[380px] bg-gradient-to-b from-indigo-950 via-slate-900 to-slate-950 border border-indigo-400/30 rounded-3xl p-5 space-y-4 pop-in">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold uppercase tracking-wider text-indigo-300">✨ Weekly Brain Wrap</span>
+          <button onclick="closeWrapModal()" class="w-7 h-7 rounded-full bg-slate-800 text-slate-300 hover:text-white flex items-center justify-center">✕</button>
+        </div>
+
+        <div class="space-y-1">
+          <p class="text-xs text-indigo-200/80">Your archetype this week:</p>
+          <h3 class="text-xl font-extrabold text-white">“Caffeinated Polymath”</h3>
+          <p class="text-xs text-slate-300">You jumped from deep reading to hands-on tinkering without losing your streak.</p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2.5 text-center">
+          <div class="bg-white/5 border border-white/10 rounded-2xl p-3">
+            <p id="wrapTotalItems" class="text-xl font-extrabold text-amber-300">5</p>
+            <p class="text-[11px] text-slate-400">Room Items Built</p>
+          </div>
+          <div class="bg-white/5 border border-white/10 rounded-2xl p-3">
+            <p class="text-xl font-extrabold text-emerald-300">92%</p>
+            <p class="text-[11px] text-slate-400">Co-Op Sync Rate</p>
+          </div>
+        </div>
+
+        <div class="bg-amber-400/10 border border-amber-400/25 rounded-2xl p-3 text-xs text-amber-100">
+          💡 <strong>Next unlock:</strong> Add 2 more snaps to expand your Starlight Deck with a rooftop telescope.
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Banner -->
+    <div id="toast" class="hidden fixed top-5 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-amber-400 text-slate-950 font-bold text-xs shadow-xl"></div>
+  </div>
+
+  <script>
+    const state = {
+      view: 'room',
+      spaceMode: 'personal', // 'personal' | 'shared'
+      visitingFriendId: null,
+      streakDays: 9,
+      roomLevel: 1, // 1 = Studio, 2 = Expanded Loft
+      sharedFusedToday: false,
+      selectedPreset: null,
+      activeItemId: null,
+      items: [
+        {
+          id: 'item-1',
+          title: 'Towering Reading Shelf',
+          furnitureIcon: '🗄️',
+          snapIcon: '📚',
+          category: 'Academic',
+          caption: 'Mapped out three core theories before noon',
+          aiNote: 'Holds more intellectual optimism than a syllabus on day one.',
+          author: 'You',
+          time: 'Yesterday',
+          zone: 'floor',
+          notes: [
+            { author: 'Alex', text: 'Okay this shelf looks suspiciously organized 👀' }
+          ]
+        },
+        {
+          id: 'item-2',
+          title: 'Espresso Lifesaver',
+          furnitureIcon: '☕',
+          snapIcon: '🍵',
+          category: 'Life',
+          caption: 'Double oat cortado after a slow morning',
+          aiNote: 'Liquid courage disguised as a tiny ceramic cup.',
+          author: 'You',
+          time: '2d ago',
+          zone: 'floor',
+          notes: []
+        },
+        {
+          id: 'item-3',
+          title: 'Pocket Star Finder',
+          furnitureIcon: '🔭',
+          snapIcon: '⚡',
+          category: 'Tech',
+          caption: 'Built a working interactive card prototype in 40 mins',
+          aiNote: 'Proof that small, scrappy builds beat endless planning.',
+          author: 'You',
+          time: '3d ago',
+          zone: 'floor',
+          notes: []
+        },
+        {
+          id: 'item-4',
+          title: 'Courtside Grip Bag',
+          furnitureIcon: '🎾',
+          snapIcon: '📷',
+          category: 'Sports',
+          caption: 'Practiced backhand crosscourts for an hour',
+          aiNote: 'Slightly scuffed, 100% earned on the court.',
+          author: 'You',
+          time: '4d ago',
+          zone: 'floor',
+          notes: []
+        }
+      ],
+      sharedItems: [
+        {
+          id: 'shared-1',
+          title: 'Alex’s Late-Night Sketch Pad',
+          furnitureIcon: '🎨',
+          snapIcon: '🎨',
+          category: 'Life',
+          caption: 'Rough layout ideas for our shared project',
+          aiNote: 'Alex posted today — drop your snap to fuse a duo relic!',
+          author: 'Alex',
+          time: 'Today',
+          zone: 'floor',
+          notes: []
+        },
+        {
+          id: 'shared-2',
+          title: 'Your Study Lamp',
+          furnitureIcon: '💡',
+          snapIcon: '📚',
+          category: 'Academic',
+          caption: 'Outlined the intro section cleanly',
+          aiNote: 'Warm light for keeping momentum steady.',
+          author: 'You',
+          time: 'Yesterday',
+          zone: 'floor',
+          notes: []
+        }
+      ],
+      friends: [
+        {
+          id: 'alex',
+          name: 'Alex',
+          handle: '@alex.builds',
+          avatar: 'A',
+          streak: 14,
+          status: 'Posted today • Ready for co-op fusion',
+          roomName: 'Alex’s Tinkering Den',
+          items: [
+            {
+              id: 'alex-1',
+              title: 'Neon Synth Corner',
+              furnitureIcon: '🎛️',
+              snapIcon: '⚡',
+              category: 'Tech',
+              caption: 'Tested a new audio visualizer loop',
+              aiNote: 'Glowing brightly after a 20-minute experiment.',
+              author: 'Alex',
+              time: 'Today',
+              zone: 'floor',
+              notes: [{ author: 'You', text: 'Love the vibe in here!' }]
+            }
+          ]
+        },
+        {
+          id: 'maya',
+          name: 'Maya',
+          handle: '@maya.notes',
+          avatar: 'M',
+          streak: 21,
+          status: '21-day streak • Visiting your room',
+          roomName: 'Maya’s Sunlit Archive',
+          items: [
+            {
+              id: 'maya-1',
+              title: 'Botanical Herb Rack',
+              furnitureIcon: '🪴',
+              snapIcon: '🍵',
+              category: 'Life',
+              caption: 'Trimmed fresh mint & brewed herbal tea',
+              aiNote: 'Calmest corner on the entire campus.',
+              author: 'Maya',
+              time: 'Today',
+              zone: 'floor',
+              notes: []
+            }
+          ]
+        }
+      ]
+    };
+
+    function showToast(msg) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.classList.remove('hidden');
+      clearTimeout(window.__toastTimer);
+      window.__toastTimer = setTimeout(() => el.classList.add('hidden'), 2400);
+    }
+
+    function openView(viewName) {
+      state.view = viewName;
+      ['roomView', 'friendsView', 'archiveView'].forEach(id => {
+        document.getElementById(id).classList.add('hidden');
+      });
+      document.getElementById(viewName + 'View').classList.remove('hidden');
+
+      ['navRoom', 'navFriends', 'navArchive'].forEach(id => {
+        document.getElementById(id).classList.remove('text-amber-400');
+        document.getElementById(id).classList.add('text-slate-400');
+      });
+      const activeNavMap = { room: 'navRoom', friends: 'navFriends', archive: 'navArchive' };
+      if (activeNavMap[viewName]) {
+        document.getElementById(activeNavMap[viewName]).classList.remove('text-slate-400');
+        document.getElementById(activeNavMap[viewName]).classList.add('text-amber-400');
+      }
+
+      if (viewName === 'friends') renderFriends();
+      if (viewName === 'archive') renderArchive();
+      renderAll();
+    }
+
+    function switchSpaceMode(mode) {
+      state.spaceMode = mode;
+      state.visitingFriendId = null;
+
+      const btnP = document.getElementById('btnPersonalSpace');
+      const btnS = document.getElementById('btnSharedSpace');
+      if (mode === 'personal') {
+        btnP.className = 'px-3 py-1 rounded-full text-xs font-semibold transition bg-amber-400 text-slate-950';
+        btnS.className = 'px-3 py-1 rounded-full text-xs font-semibold transition text-slate-300 hover:text-white flex items-center gap-1';
+      } else {
+        btnS.className = 'px-3 py-1 rounded-full text-xs font-semibold transition bg-violet-400 text-slate-950 flex items-center gap-1';
+        btnP.className = 'px-3 py-1 rounded-full text-xs font-semibold transition text-slate-300 hover:text-white';
+      }
+      openView('room');
+    }
+
+    function visitFriend(friendId) {
+      state.visitingFriendId = friendId;
+      openView('room');
+      const friend = state.friends.find(f => f.id === friendId);
+      if (friend) showToast(`Dropped into ${friend.name}'s room`);
+    }
+
+    function triggerExpansion() {
+      if (state.roomLevel >= 2) {
+        showToast('Upper Loft is already unlocked!');
+        return;
+      }
+      state.roomLevel = 2;
+      // Move one item up to the loft for visual expansion
+      if (state.items.length > 0) {
+        state.items[0].zone = 'loft';
+      }
+      showToast('✨ Expanded to Lv.2 Loft & Starlight Deck!');
+      renderAll();
+    }
+
+    function openSnapModal() {
+      state.selectedPreset = null;
+      document.getElementById('snapCaptionInput').value = '';
+      document.getElementById('snapModal').classList.remove('hidden');
+    }
+
+    function closeSnapModal() {
+      document.getElementById('snapModal').classList.add('hidden');
+    }
+
+    function fillPreset(snapIcon, category, furnitureKey, caption, aiNote) {
+      const icons = { bookshelf: '🗄️', telescope: '🔭', espresso: '☕', dumbbells: '🎾' };
+      const titles = {
+        bookshelf: 'Psychology Compendium',
+        telescope: 'Midnight Bug Blaster',
+        espresso: 'Matcha Croissant Tray',
+        dumbbells: 'Windproof Court Kit'
+      };
+      state.selectedPreset = {
+        snapIcon,
+        category,
+        furnitureIcon: icons[furnitureKey] || '✨',
+        title: titles[furnitureKey] || 'New Room Curio',
+        aiNote
+      };
+      document.getElementById('snapCaptionInput').value = caption;
+      document.getElementById('snapCategorySelect').value = category;
+      document.getElementById('snapEmojiSelect').value = snapIcon;
+    }
+
+    function submitSnap() {
+      const caption = document.getElementById('snapCaptionInput').value.trim();
+      const category = document.getElementById('snapCategorySelect').value;
+      const snapIcon = document.getElementById('snapEmojiSelect').value;
+
+      if (!caption) {
+        showToast('Add a quick caption first!');
+        return;
+      }
+
+      const preset = state.selectedPreset;
+      const newItem = {
+        id: 'item-' + Date.now(),
+        title: preset ? preset.title : `${category} Discovery #${state.items.length + 1}`,
+        furnitureIcon: preset ? preset.furnitureIcon : '🪴',
+        snapIcon: snapIcon,
+        category: category,
+        caption: caption,
+        aiNote: preset ? preset.aiNote : `Captured from today’s ${category.toLowerCase()} streak.`,
+        author: 'You',
+        time: 'Just now',
+        zone: (state.roomLevel >= 2 && state.items.length % 2 === 1) ? 'loft' : 'floor',
+        isNew: true,
+        notes: []
+      };
+
+      state.streakDays += 1;
+
+      if (state.spaceMode === 'shared') {
+        state.sharedItems.unshift(newItem);
+        if (!state.sharedFusedToday) {
+          state.sharedFusedToday = true;
+          state.sharedItems.unshift({
+            id: 'fusion-' + Date.now(),
+            title: '⚡ Duo Resonance Relic',
+            furnitureIcon: '🔮',
+            snapIcon: '⚡',
+            category: 'Co-Op Fusion',
+            caption: `Fused: "${caption}" × Alex’s sketch`,
+            aiNote: 'Unlocked because both of you showed up today!',
+            author: 'You + Alex',
+            time: 'Just now',
+            zone: 'floor',
+            isNew: true,
+            notes: []
+          });
+          showToast('⚡ Co-Op Streak + Duo Relic unlocked!');
+        } else {
+          showToast('🔥 Added to Co-Op Room & Streak +1!');
+        }
+      } else {
+        state.visitingFriendId = null;
+        state.items.unshift(newItem);
+        if (state.items.length >= 6 && state.roomLevel < 2) {
+          state.roomLevel = 2;
+          newItem.zone = 'loft';
+          showToast('🎉 6 snaps reached! Room expanded to Lv.2 Loft!');
+        } else {
+          showToast('🔥 Snap posted! New item dropped in your room');
+        }
+      }
+
+      closeSnapModal();
+      openView('room');
+    }
+
+    function getActiveItems() {
+      if (state.visitingFriendId) {
+        const friend = state.friends.find(f => f.id === state.visitingFriendId);
+        return friend ? friend.items : [];
+      }
+      return state.spaceMode === 'shared' ? state.sharedItems : state.items;
+    }
+
+    function openItemModal(itemId) {
+      const allPools = [
+        ...state.items,
+        ...state.sharedItems,
+        ...state.friends.flatMap(f => f.items)
+      ];
+      const item = allPools.find(i => i.id === itemId);
+      if (!item) return;
+
+      state.activeItemId = item.id;
+      document.getElementById('modalCategoryTag').textContent = item.category;
+      document.getElementById('modalItemTitle').textContent = `${item.furnitureIcon} ${item.title}`;
+      document.getElementById('modalSnapEmoji').textContent = item.snapIcon;
+      document.getElementById('modalCaption').textContent = item.caption;
+      document.getElementById('modalMeta').textContent = `${item.author} • ${item.time}`;
+      document.getElementById('modalAiNote').textContent = `"${item.aiNote}"`;
+
+      renderItemNotes(item);
+      document.getElementById('itemModal').classList.remove('hidden');
+    }
+
+    function closeItemModal() {
+      document.getElementById('itemModal').classList.add('hidden');
+      state.activeItemId = null;
+    }
+
+    function renderItemNotes(item) {
+      const list = document.getElementById('modalNotesList');
+      if (!item.notes || item.notes.length === 0) {
+        list.innerHTML = `<p class="text-[11px] text-slate-500">No sticky notes yet. Be the first to leave one.</p>`;
+        return;
+      }
+      list.innerHTML = item.notes.map(n => `
+        <div class="bg-amber-300/15 border border-amber-300/30 rounded-lg px-2.5 py-1.5 text-xs text-amber-100">
+          <span class="font-bold text-amber-300">${n.author}:</span> ${n.text}
+        </div>
+      `).join('');
+    }
+
+    function addStickyNote() {
+      const input = document.getElementById('noteInput');
+      const text = input.value.trim();
+      if (!text || !state.activeItemId) return;
+
+      const allPools = [
+        ...state.items,
+        ...state.sharedItems,
+        ...state.friends.flatMap(f => f.items)
+      ];
+      const item = allPools.find(i => i.id === state.activeItemId);
+      if (!item) return;
+
+      item.notes.push({ author: 'You', text });
+      input.value = '';
+      renderItemNotes(item);
+      showToast('📌 Sticky note pinned');
+    }
+
+    function renderFriends() {
+      const container = document.getElementById('friendsList');
+      container.innerHTML = state.friends.map(f => `
+        <div class="bg-slate-800/70 border border-slate-700/70 rounded-2xl p-3 flex items-center justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-2xl bg-gradient-to-br from-sky-400 to-indigo-500 text-slate-950 font-extrabold flex items-center justify-center">
+              ${f.avatar}
+            </div>
+            <div>
+              <div class="flex items-center gap-1.5">
+                <span class="text-sm font-bold text-white">${f.name}</span>
+                <span class="text-[11px] px-2 py-0.5 rounded-full bg-orange-500/15 text-orange-300 font-semibold">🔥 ${f.streak}d</span>
+              </div>
+              <p class="text-[11px] text-slate-400">${f.status}</p>
+            </div>
+          </div>
+          <button onclick="visitFriend('${f.id}')" class="px-3 py-1.5 rounded-xl bg-amber-400/15 hover:bg-amber-400/25 border border-amber-400/30 text-amber-300 text-xs font-bold transition">
+            Visit
+          </button>
+        </div>
+      `).join('');
+    }
+
+    function renderArchive() {
+      const container = document.getElementById('archiveList');
+      const combined = [...state.items, ...state.sharedItems];
+      document.getElementById('archiveCountBadge').textContent = `${combined.length} snaps`;
+
+      container.innerHTML = combined.map(item => `
+        <div onclick="openItemModal('${item.id}')" class="cursor-pointer bg-slate-800/60 hover:bg-slate-800 border border-slate-700/70 rounded-2xl p-3 flex items-center gap-3 transition">
+          <div class="w-11 h-11 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center text-xl">
+            ${item.snapIcon}
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs font-bold text-amber-300">${item.category}</span>
+              <span class="text-[10px] text-slate-400">${item.time}</span>
+            </div>
+            <p class="text-xs font-semibold text-white truncate">${item.caption}</p>
+            <p class="text-[11px] text-slate-400 truncate">${item.furnitureIcon} ${item.title}</p>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function openWrapModal() {
+      document.getElementById('wrapTotalItems').textContent = state.items.length;
+      document.getElementById('wrapModal').classList.remove('hidden');
+    }
+
+    function closeWrapModal() {
+      document.getElementById('wrapModal').classList.add('hidden');
+    }
+
+    function renderAll() {
+      document.getElementById('streakCount').textContent = `${state.streakDays}d`;
+
+      const coopBanner = document.getElementById('coopBanner');
+      const coopStatus = document.getElementById('coopStatusText');
+      if (state.spaceMode === 'shared' && !state.visitingFriendId) {
+        coopBanner.classList.remove('hidden');
+        coopStatus.textContent = state.sharedFusedToday
+          ? 'Both of you posted today! Duo Relic active ✨'
+          : 'Alex posted today! Post yours to fuse a duo relic ⚡';
+      } else {
+        coopBanner.classList.add('hidden');
+      }
+
+      const loftZone = document.getElementById('loftZone');
+      if (!state.visitingFriendId && state.spaceMode === 'personal' && state.roomLevel >= 2) {
+        loftZone.classList.remove('hidden');
+        document.getElementById('roomBadge').textContent = 'Lv.2 Loft';
+        document.getElementById('expandBtn').textContent = 'Loft Unlocked ✓';
+      } else {
+        loftZone.classList.add('hidden');
+        document.getElementById('roomBadge').textContent = state.visitingFriendId ? 'Guest Visit' : 'Lv.1 Studio';
+        document.getElementById('expandBtn').textContent = state.roomLevel >= 2 ? 'Loft Unlocked ✓' : '+ Expand Loft';
+      }
+
+      const activeItems = getActiveItems();
+      const floorItems = activeItems.filter(i => i.zone !== 'loft');
+      const loftItems = activeItems.filter(i => i.zone === 'loft');
+
+      document.getElementById('itemCountLabel').textContent = `${activeItems.length} items placed`;
+
+      if (state.visitingFriendId) {
+        const friend = state.friends.find(f => f.id === state.visitingFriendId);
+        document.getElementById('roomTitleLabel').textContent = `🚪 ${friend ? friend.roomName : 'Friend’s Room'}`;
+        document.getElementById('presenceText').textContent = `Visiting ${friend ? friend.name : 'friend'}`;
+      } else if (state.spaceMode === 'shared') {
+        document.getElementById('roomTitleLabel').textContent = '🤝 Shared Co-Op Room';
+        document.getElementById('presenceText').textContent = 'Alex is online in Co-Op';
+      } else {
+        document.getElementById('roomTitleLabel').textContent = '🏠 Your Living & Study Nook';
+        document.getElementById('presenceText').textContent = 'Maya is peeking in';
+      }
+
+      const renderCard = (item) => `
+        <button onclick="openItemModal('${item.id}')" class="group text-left bg-slate-900/90 hover:bg-slate-800/95 border ${item.isNew ? 'border-amber-400/70 pop-in' : 'border-slate-700/70'} rounded-2xl p-2.5 transition flex flex-col justify-between gap-1.5 shadow-sm">
+          <div class="flex items-center justify-between">
+            <span class="text-2xl float-slow">${item.furnitureIcon}</span>
+            <span class="text-xs px-1.5 py-0.5 rounded-md bg-slate-800 text-slate-300" title="Attached snap">${item.snapIcon}</span>
+          </div>
+          <div>
+            <p class="text-xs font-bold text-white leading-tight line-clamp-1 group-hover:text-amber-300 transition">${item.title}</p>
+            <p class="text-[10px] text-slate-400 truncate mt-0.5">${item.caption}</p>
+          </div>
+        </button>
+      `;
+
+      document.getElementById('furnitureContainer').innerHTML = floorItems.map(renderCard).join('');
+      document.getElementById('loftItemsContainer').innerHTML = loftItems.map(item => `
+        <button onclick="openItemModal('${item.id}')" class="px-2.5 py-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-emerald-400/30 text-xs font-semibold text-white flex items-center gap-1.5">
+          <span>${item.furnitureIcon}</span>
+          <span>${item.title}</span>
+        </button>
+      `).join('');
+    }
+
+    renderAll();
+  </script>
+</body>
+</html>
